@@ -1,0 +1,175 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+Function.Intrinsic.UI.UsePixels ' Allows you to use Pixels instead of Twips throughout
+
+' Developed on 08/24/2022
+' Sentech
+' Custom Job Serialization
+' Business case: Program assigns serial numbers based on the parent part criteria entered into INV_Extra
+
+f.Intrinsic.Control.Try
+
+
+	F.ODBC.Connection!con.OpenCompanyConnection(300)
+	f.Intrinsic.Control.If(v.Caller.Hook,=,31826)
+		f.Intrinsic.UI.InvokeWaitDialog("Building serials....")
+		f.Intrinsic.Control.CallSub(CheckPart)	
+		f.Intrinsic.UI.CloseWaitDialog
+		'f.Intrinsic.UI.Msgbox("Serials have been built")
+	f.Intrinsic.Control.EndIf
+	
+	F.ODBC.Connection!con.Close()
+
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.ErrorMsg.Start
+v.Local.sError.Declare
+f.Intrinsic.String.Build("Project GCG_6874_Serialization_Assignment.g2u {0}{0}Subroutine: {1}{0}Error: {2} with Description: {3}", v.Ambient.NewLine, v.Args.CurrentSub, v.Ambient.ErrorNumber, v.Ambient.ErrorDescription, v.Local.sError)
+f.Intrinsic.UI.Msgbox(v.Local.sError)
+f.ODBC.Connection!con.Close
+f.Intrinsic.Control.End
+Program.Sub.ErrorMsg.End
+
+Program.Sub.CheckPart.Start
+v.Local.sSQL.Declare
+v.Local.sPart.Declare
+v.Local.sLocation.Declare
+v.Local.sQty.Declare
+f.Intrinsic.Control.Try
+	
+	'Query to find parent part for work order
+	f.Intrinsic.String.Build("select part,location, Qty_Order from  v_job_header where job = '{0}' and suffix = '{1}'",Variable.Passed.009000,Variable.Passed.009001,V.Local.sSQL)		
+	F.ODBC.Connection!con.OpenLocalRecordsetRO("rst",V.Local.ssql)
+	
+	f.Intrinsic.Control.If(v.ODBC.con!rst.EOF,=,False)	
+		v.Local.sPart.set(v.ODBC.con!rst.FieldValtrim!part)
+		v.Local.sLocation.set(v.ODBC.con!rst.FieldValtrim!location)
+		v.Local.sQty.Set(v.ODBC.con!rst.FieldValtrim!Qty_Order)
+	f.Intrinsic.Control.EndIf	
+	F.ODBC.con!rst.Close
+	
+	'Pass part to find serial format
+	f.Intrinsic.Control.CallSub(CheckPartSerialFormat,"Part",v.local.sPart,"Location",v.Local.sLocation,"Qty",v.Local.sQty)
+	
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+f.Intrinsic.Control.EndTry
+Program.Sub.CheckPart.End
+
+Program.Sub.CheckPartSerialFormat.Start
+v.Local.sSQL.Declare
+v.Local.sSerialFormat.Declare
+v.Local.sSerialStart.Declare
+v.Local.sParentPart.Declare
+v.Local.sPartSplit.Declare
+v.Local.sContinueFrom.Declare
+f.Intrinsic.Control.Try
+	
+	'Query to grab Serial Format, Starting point for Serial Number, and the Parent Part
+	
+	f.Intrinsic.String.Split(v.Args.Part," ",v.Local.sPartSplit)
+	'f.Intrinsic.String.Build("select Part, User1, User2, User3 from  inv_extra where User3 = '{0}'",v.Args.Part,V.Local.sSQL)
+	f.Intrinsic.String.Build("select Part, User1, User2, User3, User4 from  inv_extra where User3 = '{0}'",v.Local.sPartSplit(0),V.Local.sSQL)
+	'f.Intrinsic.String.Build("select Part, User1, User2, User3 from  inv_extra where Part = '{0}'",v.Local.sPartSplit(0),V.Local.sSQL)
+	F.ODBC.Connection!con.OpenLocalRecordsetRO("rst",V.Local.ssql)
+	
+	f.Intrinsic.Control.If(v.ODBC.con!rst.EOF,=,False)
+		v.Local.sSerialFormat.set(v.ODBC.con!rst.FieldValtrim!USER1)
+		v.Local.sSerialStart.set(v.ODBC.con!rst.FieldValtrim!USER2)
+		v.Local.sParentPart.set(v.ODBC.con!rst.FieldValtrim!USER3)
+		v.Local.sContinueFrom.Set(v.ODBC.con!rst.FieldValtrim!USER4)
+	f.Intrinsic.Control.EndIf
+	
+	F.ODBC.con!rst.Close		
+	f.Intrinsic.Control.CallSub(CreateSerialNumbers,"SerialFormat",v.Local.sSerialFormat,"SerialStart",v.Local.sSerialStart,"ParentPart",v.Local.sParentPart,"ContinueFrom",v.Local.sContinueFrom,"Qty",v.Args.Qty)
+
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+f.Intrinsic.Control.EndTry
+Program.Sub.CheckPartSerialFormat.End
+
+Program.Sub.CreateSerialNumbers.Start
+v.Local.iCount.Declare
+v.Local.sMax.Declare
+v.Local.sSQL.Declare
+v.Local.iNextSerial.Declare
+v.Local.sRet.Declare
+v.Local.sSerial.Declare
+v.Local.bFirst.Declare
+v.Local.sSerialLeftPad.Declare
+v.Local.sPrefix.Declare
+v.Local.sZeroes.Declare
+v.Local.sSuffix.Declare
+v.Local.bStop.Declare
+v.Local.iStart.Declare
+f.Intrinsic.Control.Try
+	
+	
+	'Split serial number to establish Prefix, serial number, and then suffix
+	'Split on zeroes
+	f.Intrinsic.String.Split(v.Args.SerialFormat,"0",v.Local.sSerial)
+	'Assign Prefix
+	v.Local.sPrefix.Set(v.Local.sSerial(0))
+	f.Intrinsic.Control.For(v.Local.iCount,0,v.Args.SerialFormat.Length,1)
+	
+		f.Intrinsic.Control.If(v.Local.sSerial(v.Local.iCount),=,"",OR, v.Local.sPrefix,=,v.Local.sSerial(v.Local.iCount))
+			f.Intrinsic.Control.If(v.Local.bStop,=,false)
+				f.Intrinsic.String.Build("{0}{1}","0",v.Local.sZeroes,v.Local.sZeroes)
+			f.Intrinsic.Control.EndIf					
+		f.Intrinsic.Control.Else			
+			f.Intrinsic.Control.If(v.Local.sSerial(v.Local.iCount),=,"OOB")
+				f.Intrinsic.Control.ExitFor(v.Local.iCount)
+			f.Intrinsic.Control.EndIf		
+			f.Intrinsic.String.Build("{0}{1}",v.Local.sSerial(v.Local.iCount),v.Local.sSuffix,v.Local.sSuffix)		
+			v.Local.bStop.Set(True)
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.Next(v.Local.iCount)
+
+	'Loads name of BDF and ID into memory
+	Function.Intrinsic.BDF.Load("AUX001","AUX001")
+
+	'Loop through qty and assign serial numbers
+	f.Intrinsic.Control.For(v.Local.iCount,1,v.Args.Qty,1)
+		'If first pass, grab starting serial number then reattach prefix and suffix if using them
+		f.Intrinsic.Control.If(v.Local.iCount,=,1)
+			'If part number already has existing serial numbers
+			f.Intrinsic.Control.If(v.Args.ContinueFrom,=,"")
+				v.Local.sZeroes.Set(v.Args.SerialStart)
+			f.Intrinsic.Control.Else
+				v.Local.sZeroes.Set(v.Args.ContinueFrom)
+			f.Intrinsic.Control.EndIf
+									
+			f.Intrinsic.String.Build("{0}{1}{2}",v.Local.sPrefix,v.Local.sZeroes,v.Local.sSuffix,v.Local.sSerial)
+			Function.Intrinsic.BDF.WriteRow("AUX001",v.Local.sSerial)
+		'If not first pass add 1 to previous serial number then reattach prefix and suffix if using them
+		f.Intrinsic.Control.Else
+			v.Local.iNextSerial.Set(v.Local.sZeroes)
+			f.Intrinsic.Math.Add(v.Local.iNextSerial,1,v.Local.iNextSerial)
+			f.Intrinsic.String.LPad(v.Local.iNextSerial.String,"0",v.Local.sZeroes.Length,v.Local.sZeroes)
+			f.Intrinsic.String.Build("{0}{1}{2}",v.Local.sPrefix,v.Local.sZeroes,v.Local.sSuffix,v.Local.sSerial)
+			Function.Intrinsic.BDF.WriteRow("AUX001",v.Local.sSerial)
+		
+		f.Intrinsic.Control.EndIf		
+	f.Intrinsic.Control.Next(v.Local.iCount)
+	'Save serial numbers to the grid in scren SER007
+	Function.Intrinsic.BDF.Save("AUX001","AUX001")
+	
+	f.Intrinsic.Math.Add(v.Local.iNextSerial,1,v.Local.iNextSerial)
+	'Update records with last used serial number
+	f.Intrinsic.String.Build("UPDATE INV_EXTRA Set USER4 = '{0}' where USER3 = '{1}'",v.Local.iNextSerial,v.Args.ParentPart,v.Local.sSQL)	
+	f.ODBC.Connection!con.Execute(v.Local.sSQL)
+	
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+f.Intrinsic.Control.EndTry
+Program.Sub.CreateSerialNumbers.End
+
+Program.Sub.Comments.Start
+${$5$}$2.0.0.0$}$2
+${$6$}$Globalshop$}$20221207102237622$}$XbGA5Jlbk/pa9e8jvNC+5gB1AWnpDTHqi6JZpvXQRTrshT/K/f12ECKUHWbznFebb0c5RW59vTpCckoPz25PfA==
+Program.Sub.Comments.End
